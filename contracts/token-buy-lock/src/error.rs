@@ -10,7 +10,9 @@ pub enum Error
 	Encoding,
 	// Add customized errors here...
 	Amount,
-	ArgsLength
+	ArgsLength,
+	DataLength,
+	TransactionStructure
 }
 
 impl From<SysError> for Error

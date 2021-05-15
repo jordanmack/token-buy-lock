@@ -1,4 +1,5 @@
-// Import from core instead of from std since we are in no-std mode.
+// Import from alloc core instead of from std since we are in no-std mode.
+use alloc::vec::Vec;
 use core::result::Result;
 
 // Import CKB syscalls and structures.
@@ -24,6 +25,14 @@ fn check_owner_mode(args: &Bytes) -> Result<bool, Error>
 
 	// Return the owner mode status.
 	Ok(is_owner_mode)
+}
+
+/// Count the number of Token Buy Lock cells in the transaction.
+fn count_token_buy_lock_cells() -> Result<usize, Error>
+{
+	let count = QueryIter::new(load_cell_lock_hash, Source::GroupInput).map(|_|1).sum();
+
+	Ok(count)
 }
 
 /// Count the number of tokens in the specified source with the specified lock hash and type hash.
@@ -68,11 +77,11 @@ fn determine_token_amount(source: Source, lock_hash: &[u8], type_hash: &[u8]) ->
 }
 
 // Load the amount of SUDT tokens that are expected in exchange for CKB.
-fn load_expected_token_amount(args: &Bytes) -> u128
+fn load_expected_token_amount(data: &Vec<u8>) -> u128
 {
 	// Convert the binary data in the cell to a u128 value.
     let mut buffer = [0u8; SUDT_DATA_LEN];
-    buffer.copy_from_slice(&args[SCRIPT_HASH_LEN*2..SCRIPT_HASH_LEN*2+SUDT_DATA_LEN]);
+    buffer.copy_from_slice(&data[SCRIPT_HASH_LEN..SCRIPT_HASH_LEN+SUDT_DATA_LEN]);
     let amount = u128::from_le_bytes(buffer);
 
     amount
@@ -85,8 +94,8 @@ pub fn main() -> Result<(), Error>
 	let script = load_script()?;
 	let args: Bytes = script.args().unpack();
 
-	// Verify the the arguments length matches the length of two Blake2b hashes and an SUDT amount.
-	if args.len() < SCRIPT_HASH_LEN + SCRIPT_HASH_LEN + SUDT_DATA_LEN
+	// Verify the the arguments length matches the length of a single Blake2b hash.
+	if args.len() != SCRIPT_HASH_LEN
 	{
 		return Err(Error::ArgsLength);
 	}
@@ -97,11 +106,24 @@ pub fn main() -> Result<(), Error>
 		return Ok(());
 	}
 
-	// Count the number of tokens in the GroupOutput being sent to the owner lock hash.
-	let output_token_amount = determine_token_amount(Source::Output, &args[0..SCRIPT_HASH_LEN], &args[SCRIPT_HASH_LEN..SCRIPT_HASH_LEN*2])?;
+	// Verify the number of Token Buy Lock cells in the transaction is one.
+	if count_token_buy_lock_cells()? != 1
+	{
+		return Err(Error::TransactionStructure);
+	}
+
+	// Load the data from the Token Buy Lock cell and verify it is of a proper length.
+	let token_buy_lock_data = load_cell_data(0, Source::GroupInput)?;
+	if token_buy_lock_data.len() < SCRIPT_HASH_LEN + SUDT_DATA_LEN
+	{
+		return Err(Error::DataLength);
+	}
+
+	// Count the number of tokens being sent to the owner lock hash.
+	let output_token_amount = determine_token_amount(Source::Output, &args[0..SCRIPT_HASH_LEN], &token_buy_lock_data[0..SCRIPT_HASH_LEN])?;
 
     // Load the expected SUDT token amount from the args.
-    let expected_token_amount = load_expected_token_amount(&args);
+    let expected_token_amount = load_expected_token_amount(&token_buy_lock_data);
 
 	// If the amount of input tokens is less than the amount of expected output tokens, return an error.   
 	if output_token_amount < expected_token_amount
