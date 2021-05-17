@@ -12,7 +12,6 @@ pub enum Error
 	Amount,
 	ArgsLength,
 	DataLength,
-	TransactionStructure
 }
 
 impl From<SysError> for Error
